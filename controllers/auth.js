@@ -1,0 +1,156 @@
+const crypto = require('crypto');
+const User = require('../models/Users');
+const ErrorResponse = require('../utils/errorResponse');
+const sendEmail = require('../utils/sendEmail');
+
+exports.register = async (req, res, next) => {
+    // res.send("Register  route");
+    const {username, email, password} = req.body;
+
+    try{
+        const user = await User.create({
+            username, email, password
+        });
+        // res.status(201).json({
+        //     success: true,
+        //     token:"73rg2ybc28bx"
+        // });
+        sendToken(user, 201, res);
+    } catch (error) {
+        // res.status(500).json({
+        //     success:false,
+        //     error: error.message,
+        // });
+        next(error);
+    }
+
+};
+
+exports.login = async (req, res, next) => {
+    const {email, password} = req.body;
+    
+    if(!email || !password){
+        // res.status(404).json({
+        //     success:false, error: "Please provide email and password(msg from backend)"
+        // })
+        return next(new ErrorResponse("Please provide email and password(msg from backend)", 400));
+
+    }
+
+    try{
+        const user = await User.findOne({email}).select("+password");
+
+        if(!user){
+            // res.status(404).json({success:false, error:"Invalid Credentials"})
+
+            return next(new ErrorResponse("Invalid Credentials(msg from backend)", 401));
+        }
+
+        const isMatch = await user.comparePassword(password);
+
+        if(!isMatch){
+            // res.status(404).json({success:false, error:"Invalid Password"})
+
+            return next(new ErrorResponse("Invalid Password(msg from backend)", 401));
+        }
+        //replace it later with awt tokens
+        // res.status(200).json({
+        //     success: true,
+        //     token:"euaiafq364h371g"
+        // });
+
+        sendToken(user, 200, res);
+
+    } catch (error){
+        res.status(500).json({
+            success:false,
+            error: error.message,
+        });
+    }
+};
+
+exports.forgotpassword = async (req, res, next) => {
+    const {email} = req.body;
+
+    try{
+        const user = await User.findOne({email});
+
+        if(!user){
+            return next(new ErrorResponse("You haven't registered email can't be sent", 404))
+        }
+
+        const resetToken = user.getResetPasswordToken();
+        await user.save();
+
+        const resetUrl = `http://localhost:3000/resetpassword/${resetToken}`;
+
+        //msg that is to be sent to the user mail
+        const message = `
+        <h1> You have requested a new password reset</h1>
+        <p>Please click the below link to reset your password</P>
+
+        <a href=${resetUrl} clicktracking=off>
+        ${resetUrl}</a><br>
+        <p>The Above link will expire after 10mins</p>
+        `
+
+        try{
+            await sendEmail({
+                to: user.email,
+                subject: "Your GCTERP Password Reset Request",
+                text: message
+            });
+
+            res.status(200).json({
+                success:true,
+                data: "Email sent"
+            });
+
+        }catch(error){
+            user.resetPasswordToken = undefined;
+            user.resetPasswordExpire = undefined;
+
+            await user.save();
+
+            return next(new ErrorResponse("Something is wrong Email couldn't be sent", 500));
+        }
+
+    } catch (error){
+        next(error);
+    }
+    
+};
+
+exports.resetpassword = async (req, res, next) => {
+   const resetPasswordToken = crypto.createHash("sha256").update(req.params.resetToken).digest("hex");
+   try{
+    const user = await User.findOne({
+        resetPasswordToken,
+        resetPasswordExpire: {$gt: Date.now()}
+    });
+
+    if(!user){
+        return next(new ErrorResponse("Invalid Reset link(Token)", 400));
+    }
+
+    user.password = req.body.password;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+
+    await user.save();
+    res.status(201).json({
+        success:true,
+        data: "Password Reset Successful"
+    });
+
+   } catch (error){
+    next(error);
+   }
+    
+};
+
+
+const sendToken = (user, statusCode, res) => {
+    const token = user.getSignedToken();
+    res.status(statusCode).json({success:true, token});
+}
