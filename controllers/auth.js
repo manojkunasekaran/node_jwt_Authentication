@@ -97,7 +97,7 @@ exports.forgotpassword = async (req, res, next) => {
         try{
             await sendEmail({
                 to: user.email,
-                subject: "Your GCTERP Password Reset Request",
+                subject: "Your Password Reset Request",
                 text: message
             });
 
